@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOP: Kompendium dla Opornych</title>
+    <style>
+        :root {
+            --bg: #f4f7f6;
+            --text: #2c3e50;
+            --primary: #2980b9;
+            --accent: #e67e22;
+            --code-bg: #2d3436;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: var(--text);
+            background-color: var(--bg);
+            margin: 0;
+            display: flex;
+        }
+        nav {
+            width: 280px;
+            background: #fff;
+            height: 100vh;
+            position: fixed;
+            border-right: 1px solid #ddd;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        main {
+            margin-left: 320px;
+            padding: 40px;
+            max-width: 900px;
+        }
+        h1, h2, h3 { color: var(--primary); border-bottom: 2px solid #3498db33; padding-bottom: 5px; }
+        .warning {
+            background: #fff3cd;
+            border-left: 5px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        pre {
+            background: var(--code-bg);
+            color: #dfe6e9;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-size: 14px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        code { font-family: 'Consolas', monospace; }
+        .tag {
+            display: inline-block;
+            background: var(--accent);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-right: 5px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: #fff;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th { background: #f8f9fa; }
+        .btn-copy {
+            cursor: pointer;
+            color: var(--primary);
+            font-size: 0.8em;
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+
+<nav>
+    <h3>Spis Treści</h3>
+    <ul>
+        <li><a href="#headers">1. Nagłówki i Setup</a></li>
+        <li><a href="#shm">2. Pamięć Współdzielona (SHM)</a></li>
+        <li><a href="#mutex">3. Robust Mutex</a></li>
+        <li><a href="#processes">4. Zarządzanie Procesami</a></li>
+        <li><a href="#signals">5. Obsługa Sygnałów</a></li>
+        <li><a href="#traps">6. Słownik Pułapek</a></li>
+    </ul>
+</nav>
+
+<main>
+    <h1>🐧 SOP: Kompendium dla Opornych (Linux IPC)</h1>
+    <p>Ściągawka do zadań z systemów operacyjnych (Bitronka, Całkowanie, Pamięć Dzielona).</p>
+
+    <div class="warning">
+        <strong>Zasada Złota:</strong> Zawsze sprawdzaj błędy funkcji systemowych (<code>if (result == -1)</code>). W SOP błędy nie znikają same!
+    </div>
+
+    <h2 id="headers">1. Nagłówki i Setup</h2>
+    <pre><code>#define _GNU_SOURCE
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;     // fork, ftruncate, usleep
+#include &lt;sys/mman.h&gt;   // mmap, shm_open, shm_unlink
+#include &lt;sys/stat.h&gt;   // uprawnienia (0666)
+#include &lt;fcntl.h&gt;      // O_CREAT, O_RDWR
+#include &lt;pthread.h&gt;    // Mutexy, bariery
+#include &lt;signal.h&gt;     // SIGINT, SIGKILL
+#include &lt;errno.h&gt;      // EOWNERDEAD</code></pre>
+
+    <h2 id="shm">2. Pamięć Współdzielona (SHM)</h2>
+    <p>Schemat: <strong>shm_open</strong> (stworzenie) &rarr; <strong>ftruncate</strong> (rozmiar) &rarr; <strong>mmap</strong> (dostęp).</p>
+    <pre><code>// 1. Otwieranie obiektu
+int fd = shm_open("/moje_shm", O_CREAT | O_RDWR, 0666);
+if (fd == -1) perror("shm_open");
+
+// 2. Nadawanie rozmiaru (KRYTYCZNE!)
+ftruncate(fd, sizeof(shared_data_t));
+
+// 3. Mapowanie do struktury
+shared_data_t *data = mmap(NULL, sizeof(shared_data_t), 
+                           PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+close(fd); // Deskryptor nie jest już potrzebny po mmap</code></pre>
+
+    <h2 id="mutex">3. Robust Mutex</h2>
+    <p>Niezbędny, gdy procesy mogą "zginąć" (np. przez <code>abort()</code>).</p>
+    <table>
+        <tr>
+            <th>Krok</th>
+            <th>Funkcja</th>
+        </tr>
+        <tr>
+            <td>Atrybuty</td>
+            <td><code>pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST);</code></td>
+        </tr>
+        <tr>
+            <td>Blokada</td>
+            <td><code>if (pthread_mutex_lock(&m) == EOWNERDEAD) pthread_mutex_consistent(&m);</code></td>
+        </tr>
+    </table>
+
+    <h2 id="processes">4. Zarządzanie Procesami (Fork)</h2>
+    <pre><code>for (int i = 0; i < num_workers; i++) {
+    switch (fork()) {
+        case -1: perror("fork"); exit(1);
+        case 0:  
+            // Kod dziecka
+            printf("Pracownik %d startuje\n", getpid());
+            do_work(i, data);
+            exit(EXIT_SUCCESS); // Dziecko musi umrzeć tutaj!
+        default: break; // Rodzic idzie dalej tworzyć dzieci
+    }
+}
+// Rodzic czeka na koniec
+while (wait(NULL) > 0);</code></pre>
+
+    <h2 id="signals">5. Obsługa Sygnałów</h2>
+    <p>Służy do bezpiecznego kończenia pętli <code>while(1)</code>.</p>
+    <pre><code>volatile sig_atomic_t keep_running = 1;
+void handler(int sig) { keep_running = 0; }
+
+// W main:
+struct sigaction sa = {.sa_handler = handler};
+sigaction(SIGINT, &sa, NULL);
+
+// W pętli procesu:
+while(keep_running) { ... }</code></pre>
+
+    <h2 id="traps">6. Słownik Pułapek</h2>
+    <ul>
+        <li><span class="tag">Bus Error</span> Zapomniałeś o <code>ftruncate</code>.</li>
+        <li><span class="tag">Zombie</span> Zapomniałeś o <code>wait()</code> lub <code>waitpid()</code>.</li>
+        <li><span class="tag">Deadlock</span> Proces padł trzymając zwykły mutex (użyj Robust!).</li>
+        <li><span class="tag">Leaking SHM</span> Zapomniałeś o <code>shm_unlink()</code> na końcu serwera.</li>
+    </ul>
+</main>
+
+</body>
+</html>
