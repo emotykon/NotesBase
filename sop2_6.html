@@ -34,12 +34,13 @@
             padding: 40px;
             max-width: 900px;
         }
-        h1, h2, h3 { color: var(--primary); border-bottom: 2px solid #3498db33; padding-bottom: 5px; }
+        h1, h2, h3 { color: var(--primary); border-bottom: 2px solid #3498db33; padding-bottom: 5px; margin-top: 30px; }
         .warning {
             background: #fff3cd;
             border-left: 5px solid #ffc107;
             padding: 15px;
             margin: 20px 0;
+            border-radius: 4px;
         }
         pre {
             background: var(--code-bg);
@@ -49,6 +50,7 @@
             overflow-x: auto;
             font-size: 14px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            position: relative;
         }
         code { font-family: 'Consolas', monospace; }
         .tag {
@@ -73,114 +75,147 @@
             text-align: left;
         }
         th { background: #f8f9fa; }
-        .btn-copy {
+        .copy-btn {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
             cursor: pointer;
-            color: var(--primary);
-            font-size: 0.8em;
-            text-decoration: underline;
+            font-size: 11px;
         }
+        .copy-btn:hover { background: #1f6391; }
     </style>
 </head>
 <body>
 
 <nav>
-    <h3>Spis Treści</h3>
+    <h3>📌 Nawigacja</h3>
     <ul>
         <li><a href="#headers">1. Nagłówki i Setup</a></li>
-        <li><a href="#shm">2. Pamięć Współdzielona (SHM)</a></li>
-        <li><a href="#mutex">3. Robust Mutex</a></li>
-        <li><a href="#processes">4. Zarządzanie Procesami</a></li>
-        <li><a href="#signals">5. Obsługa Sygnałów</a></li>
-        <li><a href="#traps">6. Słownik Pułapek</a></li>
+        <li><a href="#shm">2. Pamięć Współdzielona</a></li>
+        <li><a href="#bitronka">3. Bitronka (Wielu-Mutexy)</a></li>
+        <li><a href="#robust">4. Robust Mutex & Death</a></li>
+        <li><a href="#integration">5. Całkowanie (Semafor)</a></li>
+        <li><a href="#signals">6. Obsługa Sygnałów</a></li>
+        <li><a href="#traps">7. Słownik Pułapek</a></li>
     </ul>
 </nav>
 
 <main>
     <h1>🐧 SOP: Kompendium dla Opornych (Linux IPC)</h1>
-    <p>Ściągawka do zadań z systemów operacyjnych (Bitronka, Całkowanie, Pamięć Dzielona).</p>
+    <p>Zoptymalizowana ściągawka do zadań z laboratoriów. Używaj przycisków <strong>Copy</strong> do szybkiego wklejania szablonów.</p>
 
     <div class="warning">
-        <strong>Zasada Złota:</strong> Zawsze sprawdzaj błędy funkcji systemowych (<code>if (result == -1)</code>). W SOP błędy nie znikają same!
+        <strong>Zasada Złota:</strong> Pamiętaj o kompilacji z flagami: <code>-lpthread -lrt</code>. Bez tego funkcje SHM i Mutexy nie zadziałają!
     </div>
 
     <h2 id="headers">1. Nagłówki i Setup</h2>
     <pre><code>#define _GNU_SOURCE
 #include &lt;stdio.h&gt;
 #include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
 #include &lt;unistd.h&gt;     // fork, ftruncate, usleep
 #include &lt;sys/mman.h&gt;   // mmap, shm_open, shm_unlink
 #include &lt;sys/stat.h&gt;   // uprawnienia (0666)
+#include &lt;sys/wait.h&gt;   // wait
 #include &lt;fcntl.h&gt;      // O_CREAT, O_RDWR
-#include &lt;pthread.h&gt;    // Mutexy, bariery
+#include &lt;pthread.h&gt;    // Mutexy
+#include &lt;semaphore.h&gt;  // Semafory nazwane
 #include &lt;signal.h&gt;     // SIGINT, SIGKILL
 #include &lt;errno.h&gt;      // EOWNERDEAD</code></pre>
 
     <h2 id="shm">2. Pamięć Współdzielona (SHM)</h2>
-    <p>Schemat: <strong>shm_open</strong> (stworzenie) &rarr; <strong>ftruncate</strong> (rozmiar) &rarr; <strong>mmap</strong> (dostęp).</p>
-    <pre><code>// 1. Otwieranie obiektu
-int fd = shm_open("/moje_shm", O_CREAT | O_RDWR, 0666);
-if (fd == -1) perror("shm_open");
+    <pre><code>// 1. Definicja struktury (Dopasuj do zadania)
+typedef struct {
+    pthread_mutex_t mutex;
+    int data[256];
+    int counter;
+    int stop_flag;
+} shared_t;
 
-// 2. Nadawanie rozmiaru (KRYTYCZNE!)
-ftruncate(fd, sizeof(shared_data_t));
+// 2. Setup (Tylko Rodzic/Serwer)
+int fd = shm_open("/my_shm", O_CREAT | O_RDWR, 0666);
+ftruncate(fd, sizeof(shared_t));
+shared_t *sh = mmap(NULL, sizeof(shared_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+close(fd);</code></pre>
 
-// 3. Mapowanie do struktury
-shared_data_t *data = mmap(NULL, sizeof(shared_data_t), 
-                           PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-close(fd); // Deskryptor nie jest już potrzebny po mmap</code></pre>
+    <h2 id="bitronka">3. Bitronka: Mutexy na każdą półkę</h2>
+    <p>Jeśli zadanie wymaga blokowania konkretnych indeksów tablicy:</p>
+    <pre><code>// W strukturze:
+pthread_mutex_t locks[256]; 
 
-    <h2 id="mutex">3. Robust Mutex</h2>
-    <p>Niezbędny, gdy procesy mogą "zginąć" (np. przez <code>abort()</code>).</p>
-    <table>
-        <tr>
-            <th>Krok</th>
-            <th>Funkcja</th>
-        </tr>
-        <tr>
-            <td>Atrybuty</td>
-            <td><code>pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST);</code></td>
-        </tr>
-        <tr>
-            <td>Blokada</td>
-            <td><code>if (pthread_mutex_lock(&m) == EOWNERDEAD) pthread_mutex_consistent(&m);</code></td>
-        </tr>
-    </table>
+// Inicjalizacja atrybutów:
+pthread_mutexattr_t attr;
+pthread_mutexattr_init(&attr);
+pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
+pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST);
 
-    <h2 id="processes">4. Zarządzanie Procesami (Fork)</h2>
-    <pre><code>for (int i = 0; i < num_workers; i++) {
-    switch (fork()) {
-        case -1: perror("fork"); exit(1);
-        case 0:  
-            // Kod dziecka
-            printf("Pracownik %d startuje\n", getpid());
-            do_work(i, data);
-            exit(EXIT_SUCCESS); // Dziecko musi umrzeć tutaj!
-        default: break; // Rodzic idzie dalej tworzyć dzieci
-    }
+for(int i = 0; i < N; i++) {
+    pthread_mutex_init(&sh->locks[i], &attr);
+}</code></pre>
+
+    <h2 id="robust">4. Obsługa Śmierci (Robust Mutex)</h2>
+    <p>Kluczowe dla etapu 4 Bitronki (obsługa <code>abort()</code>):</p>
+    <pre><code>int res = pthread_mutex_lock(&sh->locks[idx]);
+if (res == EOWNERDEAD) {
+    printf("[%d] Found a dead body at aisle %d\n", getpid(), idx);
+    pthread_mutex_consistent(&sh->locks[idx]);
+    // Tu opcjonalnie: sh->workers_alive--;
 }
-// Rodzic czeka na koniec
-while (wait(NULL) > 0);</code></pre>
+// ... praca ...
+pthread_mutex_unlock(&sh->locks[idx]);</code></pre>
 
-    <h2 id="signals">5. Obsługa Sygnałów</h2>
-    <p>Służy do bezpiecznego kończenia pętli <code>while(1)</code>.</p>
+    <h2 id="integration">5. Całkowanie: Semafor Nazwany</h2>
+    <p>Zapobiega wyścigowi przy jednoczesnym starcie wielu procesów:</p>
+    <pre><code>sem_t *gate = sem_open("/shm_gate", O_CREAT, 0666, 1);
+sem_wait(gate); 
+
+// Sekcja krytyczna (np. pierwsza inicjalizacja SHM)
+// if (sh->counter == 0) { ... }
+
+sem_post(gate);
+sem_close(gate);
+// Na samym końcu programu: sem_unlink("/shm_gate");</code></pre>
+
+    <h2 id="signals">6. Obsługa Sygnałów (SIGINT)</h2>
     <pre><code>volatile sig_atomic_t keep_running = 1;
 void handler(int sig) { keep_running = 0; }
 
-// W main:
+// W main():
 struct sigaction sa = {.sa_handler = handler};
 sigaction(SIGINT, &sa, NULL);
 
-// W pętli procesu:
-while(keep_running) { ... }</code></pre>
+// W pętli:
+while(keep_running && !sh->stop_flag) { ... }</code></pre>
 
-    <h2 id="traps">6. Słownik Pułapek</h2>
+    <h2 id="traps">7. Słownik Pułapek</h2>
     <ul>
-        <li><span class="tag">Bus Error</span> Zapomniałeś o <code>ftruncate</code>.</li>
-        <li><span class="tag">Zombie</span> Zapomniałeś o <code>wait()</code> lub <code>waitpid()</code>.</li>
-        <li><span class="tag">Deadlock</span> Proces padł trzymając zwykły mutex (użyj Robust!).</li>
-        <li><span class="tag">Leaking SHM</span> Zapomniałeś o <code>shm_unlink()</code> na końcu serwera.</li>
+        <li><span class="tag">Bus Error</span> Brak <code>ftruncate</code> lub zły rozmiar <code>mmap</code>.</li>
+        <li><span class="tag">Zombie</span> Zapomniałeś o <code>while(wait(NULL) > 0);</code> u rodzica.</li>
+        <li><span class="tag">404 na GitHubie</span> Poczekaj minutę na zielony ptaszek w zakładce Actions.</li>
+        <li><span class="tag">Mutex nie działa</span> Sprawdź czy ustawiłeś <code>PTHREAD_PROCESS_SHARED</code>!</li>
     </ul>
 </main>
+
+<script>
+    // Automatyczne dodawanie przycisków kopiowania
+    document.querySelectorAll('pre').forEach(block => {
+        const btn = document.createElement('button');
+        btn.innerText = 'Copy';
+        btn.className = 'copy-btn';
+        btn.onclick = () => {
+            const code = block.querySelector('code').innerText;
+            navigator.clipboard.writeText(code);
+            btn.innerText = 'Copied!';
+            setTimeout(() => btn.innerText = 'Copy', 2000);
+        };
+        block.appendChild(btn);
+    });
+</script>
 
 </body>
 </html>
