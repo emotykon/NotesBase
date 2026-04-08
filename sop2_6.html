@@ -14,197 +14,173 @@
             --accent: #e67e22;
             --code-bg: #2d3436;
         }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            line-height: 1.6;
-            color: var(--text);
-            background-color: var(--bg);
-            margin: 0;
-            display: flex;
-        }
-        nav {
-            width: 280px;
-            background: #fff;
-            height: 100vh;
-            position: fixed;
-            border-right: 1px solid #ddd;
-            padding: 20px;
-            overflow-y: auto;
-        }
-        main {
-            margin-left: 320px;
-            padding: 40px;
-            max-width: 900px;
-        }
-        h1, h2, h3 { color: var(--primary); border-bottom: 2px solid #3498db33; padding-bottom: 5px; margin-top: 30px; }
-        .warning {
-            background: #fff3cd;
-            border-left: 5px solid #ffc107;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 4px;
-        }
-        pre {
-            background: var(--code-bg);
-            color: #dfe6e9;
-            padding: 15px;
-            border-radius: 8px;
-            overflow-x: auto;
-            font-size: 14px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-            position: relative;
-        }
+        body { font-family: 'Segoe UI', sans-serif; line-height: 1.6; color: var(--text); background-color: var(--bg); margin: 0; display: flex; }
+        nav { width: 300px; background: #fff; height: 100vh; position: fixed; border-right: 1px solid #ddd; padding: 20px; overflow-y: auto; }
+        main { margin-left: 340px; padding: 40px; max-width: 1000px; }
+        h1, h2, h3 { color: var(--primary); border-bottom: 2px solid #3498db33; padding-bottom: 5px; margin-top: 35px; }
+        .desc { background: #eef2f3; padding: 15px; border-radius: 6px; margin-bottom: 10px; font-style: italic; border-left: 4px solid var(--primary); }
+        .warning { background: #fff3cd; border-left: 5px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px; }
+        pre { background: var(--code-bg); color: #dfe6e9; padding: 15px; border-radius: 8px; overflow-x: auto; position: relative; }
         code { font-family: 'Consolas', monospace; }
-        .tag {
-            display: inline-block;
-            background: var(--accent);
-            color: white;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: bold;
-            margin-right: 5px;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 20px 0;
-            background: #fff;
-        }
-        th, td {
-            border: 1px solid #ddd;
-            padding: 12px;
-            text-align: left;
-        }
-        th { background: #f8f9fa; }
-        .copy-btn {
-            position: absolute;
-            top: 5px;
-            right: 5px;
-            background: var(--primary);
-            color: white;
-            border: none;
-            padding: 4px 8px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 11px;
-        }
+        .copy-btn { position: absolute; top: 5px; right: 5px; background: var(--primary); color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; }
         .copy-btn:hover { background: #1f6391; }
+        .tag { background: var(--accent); color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; }
     </style>
 </head>
 <body>
 
 <nav>
-    <h3>📌 Nawigacja</h3>
+    <h3>🚀 SOP Quick Menu</h3>
     <ul>
-        <li><a href="#headers">1. Nagłówki i Setup</a></li>
-        <li><a href="#shm">2. Pamięć Współdzielona</a></li>
-        <li><a href="#bitronka">3. Bitronka (Wielu-Mutexy)</a></li>
-        <li><a href="#robust">4. Robust Mutex & Death</a></li>
-        <li><a href="#integration">5. Całkowanie (Semafor)</a></li>
-        <li><a href="#signals">6. Obsługa Sygnałów</a></li>
-        <li><a href="#traps">7. Słownik Pułapek</a></li>
+        <li><a href="#setup">1. Inicjalizacja Pamięci (SHM)</a></li>
+        <li><a href="#file_map">2. Mapowanie plików (mmap)</a></li>
+        <li><a href="#mutex">3. Mutexy i Robustness</a></li>
+        <li><a href="#signals">4. Sygnały i Safe Exit</a></li>
+        <li><a href="#fork">5. Cykl życia procesów</a></li>
+        <li><a href="#utils">6. Przydatne funkcje (Sleep)</a></li>
     </ul>
 </nav>
 
 <main>
-    <h1>🐧 SOP: Kompendium dla Opornych (Linux IPC)</h1>
-    <p>Zoptymalizowana ściągawka do zadań z laboratoriów. Używaj przycisków <strong>Copy</strong> do szybkiego wklejania szablonów.</p>
+    <h1>🐧 SOP: Kompendium Techniczne 2026</h1>
+    <p>Skoncentrowane wzorce implementacyjne pod zadania typu <strong>Bitronka</strong> i <strong>Całkowanie</strong>.</p>
 
-    <div class="warning">
-        <strong>Zasada Złota:</strong> Pamiętaj o kompilacji z flagami: <code>-lpthread -lrt</code>. Bez tego funkcje SHM i Mutexy nie zadziałają!
-    </div>
-
-    <h2 id="headers">1. Nagłówki i Setup</h2>
-    <pre><code>#define _GNU_SOURCE
-#include &lt;stdio.h&gt;
-#include &lt;stdlib.h&gt;
-#include &lt;string.h&gt;
-#include &lt;unistd.h&gt;     // fork, ftruncate, usleep
-#include &lt;sys/mman.h&gt;   // mmap, shm_open, shm_unlink
-#include &lt;sys/stat.h&gt;   // uprawnienia (0666)
-#include &lt;sys/wait.h&gt;   // wait
-#include &lt;fcntl.h&gt;      // O_CREAT, O_RDWR
-#include &lt;pthread.h&gt;    // Mutexy
-#include &lt;semaphore.h&gt;  // Semafory nazwane
-#include &lt;signal.h&gt;     // SIGINT, SIGKILL
-#include &lt;errno.h&gt;      // EOWNERDEAD</code></pre>
-
-    <h2 id="shm">2. Pamięć Współdzielona (SHM)</h2>
-    <pre><code>// 1. Definicja struktury (Dopasuj do zadania)
+    <h2 id="setup">1. Inicjalizacja Pamięci (Wzorzec "Otwórz lub Stwórz")</h2>
+    <div class="desc">Najczęstszy problem: Jak sprawdzić, czy jestem pierwszym procesem? Ten wzorzec używa flagi <code>O_EXCL</code>. Jeśli plik istnieje, <code>shm_open</code> zwróci błąd, co powie nam, że inicjalizacja już była robiona.</div>
+    <pre><code>// Struktura dzielona (dostosuj do zadania)
 typedef struct {
     pthread_mutex_t mutex;
-    int data[256];
     int counter;
-    int stop_flag;
+    int end_flag;
 } shared_t;
 
-// 2. Setup (Tylko Rodzic/Serwer)
-int fd = shm_open("/my_shm", O_CREAT | O_RDWR, 0666);
-ftruncate(fd, sizeof(shared_t));
-shared_t *sh = mmap(NULL, sizeof(shared_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-close(fd);</code></pre>
+shared_t* setup_shm(const char* name, int* is_first) {
+    // Próba stworzenia (EXCL gwarantuje unikalność pierwszego razu)
+    int fd = shm_open(name, O_CREAT | O_EXCL | O_RDWR, 0666);
+    *is_first = 1;
 
-    <h2 id="bitronka">3. Bitronka: Mutexy na każdą półkę</h2>
-    <p>Jeśli zadanie wymaga blokowania konkretnych indeksów tablicy:</p>
-    <pre><code>// W strukturze:
-pthread_mutex_t locks[256]; 
+    if (fd == -1 && errno == EEXIST) {
+        // Już istnieje -> podpinamy się pod istniejącą pamięć
+        fd = shm_open(name, O_RDWR, 0666);
+        *is_first = 0;
+    } else if (fd == -1) {
+        perror("shm_open"); exit(1);
+    }
 
-// Inicjalizacja atrybutów:
-pthread_mutexattr_t attr;
-pthread_mutexattr_init(&attr);
-pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
-pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST);
+    if (*is_first) {
+        if (ftruncate(fd, sizeof(shared_t)) == -1) { perror("ftruncate"); exit(1); }
+    }
 
-for(int i = 0; i < N; i++) {
-    pthread_mutex_init(&sh->locks[i], &attr);
+    shared_t* ptr = mmap(NULL, sizeof(shared_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (ptr == MAP_FAILED) { perror("mmap"); exit(1); }
+    
+    close(fd); // Deskryptor niepotrzebny po zmapowaniu
+    return ptr;
 }</code></pre>
 
-    <h2 id="robust">4. Obsługa Śmierci (Robust Mutex)</h2>
-    <p>Kluczowe dla etapu 4 Bitronki (obsługa <code>abort()</code>):</p>
-    <pre><code>int res = pthread_mutex_lock(&sh->locks[idx]);
-if (res == EOWNERDEAD) {
-    printf("[%d] Found a dead body at aisle %d\n", getpid(), idx);
-    pthread_mutex_consistent(&sh->locks[idx]);
-    // Tu opcjonalnie: sh->workers_alive--;
+    <h2 id="file_map">2. Mapowanie pliku log.txt (Bitronka)</h2>
+    <div class="desc">Etap 1 Bitronki: Zmapowanie pliku do pamięci zamiast używania <code>fprintf</code>. Pozwala modyfikować plik jak tablicę znaków <code>char[]</code>.</div>
+    <pre><code>char* map_log_file(const char* path, size_t size) {
+    int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0666);
+    if (fd == -1) { perror("open log"); exit(1); }
+    
+    // Ustawienie fizycznego rozmiaru pliku na dysku
+    if (ftruncate(fd, size) == -1) { perror("ftruncate log"); exit(1); }
+    
+    char* ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (ptr == MAP_FAILED) { perror("mmap log"); exit(1); }
+    
+    close(fd);
+    return ptr;
+}</code></pre>
+
+    <h2 id="mutex">3. Mutexy: Inicjalizacja i Robustness</h2>
+    <div class="desc">W zadaniach SOP mutex musi być <code>PTHREAD_PROCESS_SHARED</code>. Atrybut <code>ROBUST</code> pozwala przejąć mutex, gdy proces padnie (np. przez <code>abort()</code> w Bitronce).</div>
+    <pre><code>void init_mutex(pthread_mutex_t* m) {
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    
+    // 1. Dzielenie między PROCESAMI (nie tylko wątkami)
+    pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
+    
+    // 2. Obsługa nagłej śmierci właściciela
+    pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST);
+    
+    pthread_mutex_init(m, &attr);
+    pthread_mutexattr_destroy(&attr);
 }
-// ... praca ...
-pthread_mutex_unlock(&sh->locks[idx]);</code></pre>
 
-    <h2 id="integration">5. Całkowanie: Semafor Nazwany</h2>
-    <p>Zapobiega wyścigowi przy jednoczesnym starcie wielu procesów:</p>
-    <pre><code>sem_t *gate = sem_open("/shm_gate", O_CREAT, 0666, 1);
-sem_wait(gate); 
+// Bezpieczne blokowanie (Etap 4 Bitronki / Etap 4 Całkowania)
+void safe_lock(pthread_mutex_t* m) {
+    int rc = pthread_mutex_lock(m);
+    if (rc == EOWNERDEAD) {
+        // Właściciel zginął, naprawiamy stan mutexa
+        pthread_mutex_consistent(m);
+        printf("[%d] Mutex recovered after dead owner\n", getpid());
+    }
+}</code></pre>
 
-// Sekcja krytyczna (np. pierwsza inicjalizacja SHM)
-// if (sh->counter == 0) { ... }
+    <h2 id="signals">4. Obsługa Sygnałów i "Czyste Wyjście"</h2>
+    <div class="desc">Kluczowe dla zadania 3 Całkowania. Program nie może zginąć brutalnie, musi dokończyć obliczenia (batch) i dopiero wyjść.</div>
+    <pre><code>// Zmienna atomowa (bezpieczna dla przerwań)
+volatile sig_atomic_t keep_running = 1;
 
-sem_post(gate);
-sem_close(gate);
-// Na samym końcu programu: sem_unlink("/shm_gate");</code></pre>
-
-    <h2 id="signals">6. Obsługa Sygnałów (SIGINT)</h2>
-    <pre><code>volatile sig_atomic_t keep_running = 1;
-void handler(int sig) { keep_running = 0; }
+void sig_handler(int sig) {
+    if (sig == SIGINT) {
+        printf("\n[%d] Received SIGINT, finishing current batch...\n", getpid());
+        keep_running = 0;
+    }
+}
 
 // W main():
-struct sigaction sa = {.sa_handler = handler};
+struct sigaction sa;
+memset(&sa, 0, sizeof(sa));
+sa.sa_handler = sig_handler;
 sigaction(SIGINT, &sa, NULL);
 
 // W pętli:
-while(keep_running && !sh->stop_flag) { ... }</code></pre>
+while (keep_running) {
+    // Obliczaj...
+    if (sh->stop_signal) break; // Reakcja na sygnał od Kierownika (Bitronka)
+}</code></pre>
 
-    <h2 id="traps">7. Słownik Pułapek</h2>
+    <h2 id="fork">5. Cykl Życia: Tworzenie i Sprzątanie</h2>
+    <div class="desc">Prawidłowy sposób tworzenia M procesów i czekania na nie. <code>EXIT_SUCCESS</code> u dzieci zapobiega ich "ucieczce" do dalszej części kodu.</div>
+    <pre><code>void create_workers(int n, shared_t* sh) {
+    for (int i = 0; i < n; i++) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            worker_logic(i, sh); // Logika pracownika
+            exit(EXIT_SUCCESS);  // KONIECZNIE EXIT
+        } else if (pid < 0) {
+            perror("fork");
+        }
+    }
+    
+    // Rodzic czeka na wszystkie dzieci (Kierownik)
+    while (wait(NULL) > 0); 
+    printf("All workers finished.\n");
+}</code></pre>
+
+    <h2 id="utils">6. Precyzyjne Usypianie (ms_sleep)</h2>
+    <div class="desc">Zwykły <code>sleep()</code> usypia na całe sekundy. Zadania wymagają np. 100ms.</div>
+    <pre><code>void ms_sleep(int milis) {
+    struct timespec ts;
+    ts.tv_sec = milis / 1000;
+    ts.tv_nsec = (milis % 1000) * 1000000L;
+    nanosleep(&ts, NULL);
+}</code></pre>
+
+    <h2 id="traps">7. Słownik Pułapek (Dlaczego program nie działa?)</h2>
     <ul>
-        <li><span class="tag">Bus Error</span> Brak <code>ftruncate</code> lub zły rozmiar <code>mmap</code>.</li>
-        <li><span class="tag">Zombie</span> Zapomniałeś o <code>while(wait(NULL) > 0);</code> u rodzica.</li>
-        <li><span class="tag">404 na GitHubie</span> Poczekaj minutę na zielony ptaszek w zakładce Actions.</li>
-        <li><span class="tag">Mutex nie działa</span> Sprawdź czy ustawiłeś <code>PTHREAD_PROCESS_SHARED</code>!</li>
+        <li><span class="tag">Error: Bus Error</span> Zazwyczaj zapomniałeś o <code>ftruncate</code> lub rozmiar <code>mmap</code> jest mniejszy niż Twoja struktura.</li>
+        <li><span class="tag">Error: Deadlock</span> Proces zablokował mutex i zginął, a Ty nie masz <code>ROBUST</code>.</li>
+        <li><span class="tag">Leaking SHM</span> Po każdym teście wyczyść system: <code>rm /dev/shm/*</code>.</li>
+        <li><span class="tag">O_TRUNC</span> Pamiętaj, że <code>O_TRUNC</code> przy otwieraniu pliku do mapowania czyści jego zawartość!</li>
     </ul>
 </main>
 
 <script>
-    // Automatyczne dodawanie przycisków kopiowania
     document.querySelectorAll('pre').forEach(block => {
         const btn = document.createElement('button');
         btn.innerText = 'Copy';
