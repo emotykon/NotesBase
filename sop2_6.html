@@ -178,6 +178,40 @@ while (keep_running) {
         <li><span class="tag">Leaking SHM</span> Po każdym teście wyczyść system: <code>rm /dev/shm/*</code>.</li>
         <li><span class="tag">O_TRUNC</span> Pamiętaj, że <code>O_TRUNC</code> przy otwieraniu pliku do mapowania czyści jego zawartość!</li>
     </ul>
+    <h2 id="workflow">8. Algorytm rozwiązywania zadań (Workflow)</h2>
+    <div class="desc">Lista kroków, które musisz przejść w każdym zadaniu typu Bitronka / Całkowanie:</div>
+    
+    <h3>Etap 1: Setup i SHM</h3>
+    <ul>
+        <li><strong>Definicja Struktury:</strong> Stwórz <code>typedef struct</code> zawierającą wszystkie dane (mutexy, liczniki, flagi zakończenia, tablice danych).</li>
+        <li><strong>Semafor bramkowy:</strong> Jeśli zadanie to "Całkowanie" (wiele procesów niezależnych), otwórz nazwany semafor, aby tylko pierwszy proces wykonał <code>ftruncate</code> i <code>memset</code>.</li>
+        <li><strong>O_EXCL vs O_RDWR:</strong> Użyj <code>shm_open</code> z <code>O_EXCL</code>, aby wykryć, czy jesteś procesem nr 1 (inicjatorem).</li>
+        <li><strong>Mapowanie pliku:</strong> Jeśli zadanie wymaga mapowania pliku (Bitronka), otwórz plik przez <code>open</code>, nadaj mu rozmiar przez <code>ftruncate</code> i zmapuj do <code>char*</code>.</li>
+    </ul>
+
+    <h3>Etap 2: Procesy i Logika Dzieci</h3>
+    <ul>
+        <li><strong>Petla Fork:</strong> Stwórz pętlę tworzącą <code>M</code> procesów. Każde dziecko musi zakończyć się przez <code>exit(0)</code>, by nie wrócić do pętli rodzica.</li>
+        <li><strong>Inicjalizacja Mutexów:</strong> Jeśli jesteś pierwszym procesem, zainicjalizuj mutexy z flagami <code>PTHREAD_PROCESS_SHARED</code> i <code>PTHREAD_MUTEX_ROBUST</code>.</li>
+        <li><strong>Praca Dziecka:</strong> Zaimplementuj pętlę pracy (np. 10 prób zamiany produktów). Każda operacja na pamięci dzielonej MUSI być otoczona <code>pthread_mutex_lock</code> i <code>unlock</code>.</li>
+    </ul>
+
+    <h3>Etap 3: Zarządzanie (Kierownik / Sygnały)</h3>
+    <ul>
+        <li><strong>Proces Kierownika:</strong> Stwórz osobny proces (lub niech to będzie Rodzic), który monitoruje stan w pętli <code>while(1)</code> i śpi przez <code>usleep</code> / <code>nanosleep</code>.</li>
+        <li><strong>Sygnały:</strong> Zainstaluj handlery <code>sigaction</code>. Handler powinien tylko ustawiać flagę <code>volatile sig_atomic_t keep_running = 0;</code>.</li>
+        <li><strong>Komunikacja:</strong> Kierownik kończy pracę dzieci, ustawiając flagę w pamięci dzielonej (np. <code>sh->stop = 1;</code>).</li>
+    </ul>
+
+    <h3>Etap 4: Obsługa Błędów i Śmierci (Robustness)</h3>
+    <ul>
+        <li><strong>EOWNERDEAD:</strong> Zawsze sprawdzaj wynik <code>pthread_mutex_lock</code>. Jeśli zwróci <code>EOWNERDEAD</code>, wywołaj <code>pthread_mutex_consistent</code> i popraw liczniki (np. zdekrementuj liczbę żywych pracowników).</li>
+        <li><strong>Sprzątanie:</strong> Ostatni kończący proces MUSI wywołać <code>shm_unlink</code> i <code>sem_unlink</code>. W Bitronce użyj <code>msync</code> przed zakończeniem, aby dane z RAM trafiły do pliku na dysku.</li>
+    </ul>
+
+    <div class="warning">
+        <strong>Pamiętaj:</strong> W zadaniach z "ostatnim procesem" (Całkowanie), używaj licznika w SHM pod mutexem. Kiedy po <code>sh->counter--</code> licznik wynosi 0, wykonujesz <code>shm_unlink</code>.
+    </div>
 </main>
 
 <script>
