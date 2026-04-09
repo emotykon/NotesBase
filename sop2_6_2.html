@@ -148,7 +148,23 @@ sem_post(sem);</code></pre>
 pthread_barrierattr_init(&attr);
 pthread_barrierattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
 pthread_barrier_init(&data-&gt;barrier, &attr, num_processes);</code></pre>
+    <h3>3.1 Szybki przykład: Bariera dla Wątków</h3>
+    <div class="desc">Najprostsza synchronizacja wątków w obrębie jednego procesu.</div>
+    <pre><code>pthread_barrier_t barrier;
 
+<span class="code-comment">// 1. Inicjalizacja: Czekamy na dokładnie 3 wątki</span>
+pthread_barrier_init(&barrier, NULL, 3);
+
+<span class="code-comment">// 2. Wewnątrz funkcji wątku:</span>
+printf("Wątek %d dotarł do bariery.\n", id);
+
+<span class="code-comment">// Punkt synchronizacji - tu wątek stoi, dopóki nie będzie kompletu</span>
+pthread_barrier_wait(&barrier); 
+
+printf("Wątek %d rusza dalej, bo barierę przekroczyły już 3 wątki!\n", id);
+
+<span class="code-comment">// 3. Na końcu (w main):</span>
+pthread_barrier_destroy(&barrier);</code></pre>
 
     <h2 id="mutex_robust">4. Mutexy i Robustness (Odporność na śmierć)</h2>
     <div class="desc">Kluczowe przy używaniu <code>abort()</code> lub gdy proces ginie trzymając blokadę.</div>
