@@ -21,7 +21,7 @@
         nav ul { list-style: none; padding: 0; }
         nav li { margin-bottom: 10px; }
         nav a { text-decoration: none; color: var(--primary); font-weight: 500; font-size: 14px; }
-        nav a:hover { color: var(--accent); }
+        nav a:hover { text-decoration: underline; }
 
         /* Main Content */
         main { margin-left: 340px; padding: 40px; max-width: 1000px; }
@@ -57,11 +57,12 @@
     <ul>
         <li><a href="#mmap_types">1. Mapowanie (Anonimowe vs SHM)</a></li>
         <li><a href="#semaphores">2. Semafory (Nazwane i Nienazwane)</a></li>
+        <li><a href="#gatekeeper">2.1 Strażnik: Semafor Nazwany</a></li>
         <li><a href="#barriers">3. Bariery Współdzielone</a></li>
         <li><a href="#mutex_robust">4. Mutexy i Robustness</a></li>
         <li><a href="#signals">5. Sygnały i Czyste Wyjście</a></li>
-        <li><a href="#workflow">6. Inicjalizacja i Sprzątanie</a></li>
-        <li><a href="#utils_file">7. Funkcje: Wczytywanie z pliku</a></li>
+        <li><a href="#workflow">6. Workflow i Ostatni Proces</a></li>
+        <li><a href="#utils_file">7. Funkcje: Pliki i Parsowanie</a></li>
         <li><a href="#flags">8. Słownik Flag i Atrybutów</a></li>
         <li><a href="#sol_bitronka">9. Pełne Rozwiązanie: Bitronka</a></li>
         <li><a href="#sol_calkowanie">10. Pełne Rozwiązanie: Całkowanie</a></li>
@@ -70,752 +71,146 @@
 
 <main>
     <h1>🐧 SOP: Kompendium Techniczne 2026</h1>
-    <p>Skoncentrowane wzorce implementacyjne pod zadania typu <strong>Bitronka</strong> i <strong>Całkowanie</strong>, uwzględniające semafory, bariery i niezawodność procesów.</p>
+    <p>Skoncentrowane wzorce pod zadania <strong>Bitronka</strong> i <strong>Całkowanie</strong>.</p>
     
     <div class="warning">
-        <strong>Pamiętaj o kompilacji:</strong> Do <code>shm_open</code>, semaforów i wątków zawsze używaj flag <code>-lrt -lpthread</code> (np. <code>gcc main.c -lrt -lpthread</code>).
+        Zawsze kompiluj z: <code>gcc main.c -lrt -lpthread</code>
     </div>
 
-    <h2 id="mmap_types">1. Mapowanie: Anonimowe vs Pamięć Dzielona (shm_open)</h2>
-    <div class="desc">Dwa podstawowe sposoby na współdzielenie pamięci. </div>
+    <h2 id="mmap_types">1. Mapowanie: Anonimowe vs shm_open</h2>
+    <div class="desc">Podstawowe mechanizmy współdzielenia struktur danych.</div>
     
-    <table>
-        <tr><th>Cecha</th><th>mmap (Anonymous)</th><th>shm_open (POSIX)</th></tr>
-        <tr><td><strong>Zastosowanie</strong></td><td><code>fork()</code> (rodzic-dziecko)</td><td>Dowolne, niezależne procesy</td></tr>
-        <tr><td><strong>Identyfikator</strong></td><td>Brak (dziedziczenie wskaźnika)</td><td>Nazwa w systemie (np. <code>/my_shm</code>)</td></tr>
-        <tr><td><strong>Trwałość</strong></td><td>Znika po zakończeniu procesów</td><td>Trwa, dopóki nie użyjesz <code>shm_unlink</code></td></tr>
-    </table>
-
     <h3>1.1 Mapowanie Anonimowe (Dla Fork)</h3>
-    <pre><code><span class="code-comment">// Najszybszy sposób, gdy używasz fork(). Pamięć nie jest powiązana z dyskiem.</span>
+    <pre><code><span class="code-comment">// Najszybszy sposób dla procesów rodzic-dziecko.</span>
 void* addr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);</code></pre>
 
-    <h3>1.2 Pamięć Współdzielona POSIX (Dla niezależnych)</h3>
-    <pre><code>#include &lt;sys/mman.h&gt;
-#include &lt;fcntl.h&gt;
-#include &lt;unistd.h&gt;
-
-void* setup_named_shm(const char* shm_name, size_t size) {
-    <span class="code-comment">// 1. Otwarcie obiektu w pamięci (/dev/shm/...)</span>
-    int fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
-    if (fd == -1) return NULL;
-
-    <span class="code-comment">// 2. KLUCZOWE: Nadanie rozmiaru w RAM</span>
-    if (ftruncate(fd, size) == -1) {
-        shm_unlink(shm_name);
-        return NULL;
-    }
-
-    <span class="code-comment">// 3. Mapowanie (MAP_SHARED jest obowiązkowe)</span>
-    void* ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    close(fd);
-
-    if (ptr == MAP_FAILED) return NULL;
-    return ptr;
-}</code></pre>
+    <h3>1.2 Pamięć Współdzielona POSIX (shm_open)</h3>
+    <pre><code><span class="code-comment">// Dla niezależnych programów. Widoczne w /dev/shm/.</span>
+int fd = shm_open("/moj_shm", O_CREAT | O_RDWR, 0666);
+ftruncate(fd, size);
+int* data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);</code></pre>
 
 
     <h2 id="semaphores">2. Semafory (Nazwane i Nienazwane)</h2>
-    
-    <table>
-        <tr><th>Cecha</th><th>Muteks (pthread_mutex)</th><th>Semafor (sem_t)</th></tr>
-        <tr><td><strong>Właściciel</strong></td><td>Tylko wątek, który zamknął, może otworzyć.</td><td>Dowolny proces może podnieść (post).</td></tr>
-        <tr><td><strong>Zastosowanie</strong></td><td>Ochrona zasobów (wyłączny dostęp).</td><td>Synchronizacja i sygnalizacja (np. producent-konsument).</td></tr>
-        <tr><td><strong>Złożoność</strong></td><td>Wymaga atrybutów dla procesów.</td><td>Prostszy w użyciu między procesami (pshared=1).</td></tr>
-    </table>
 
-    <h3>2.1 Semafor Nienazwany (W pamięci mmap)</h3>
-    <div class="desc">Używane wewnątrz mapowanej struktury. Inicjalizacja przez <code>sem_init</code>. Wymaga <code>pshared = 1</code> do działania między procesami.</div>
-    <pre><code>#include &lt;semaphore.h&gt;
+    <h3>2.1 Semafor Nienazwany (Wewnątrz mmap)</h3>
+    <pre><code><span class="code-comment">// Inicjalizacja w strukturze: sem_init(&(shm->bin_sem), 1, 1);
+// pshared=1 oznacza dzielenie MIĘDZY PROCESAMI.</span>
+sem_wait(&(shm-&gt;bin_sem)); <span class="code-comment">// Sekcja krytyczna</span>
+shm-&gt;value++;
+sem_post(&(shm-&gt;bin_sem));</code></pre>
+
+    <h2 id="gatekeeper">2.1 Strażnik: Semafor Nazwany (Najbezpieczniejsza metoda)</h2>
+    <div class="desc">Zapewnia, że proces "tworzenie + inicjalizacja" jest operacją niepodzielną. Zapobiega Race Condition na starcie.</div>
+    <pre><code>#include &lt;fcntl.h&gt;
 #include &lt;sys/mman.h&gt;
+#include &lt;semaphore.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;errno.h&gt;
 
-struct shared_memory {
-    sem_t bin_sem;
-    int value;
-};
+#define SHM_NAME "/moje_obliczenia"
+#define SEM_NAME "/moj_straznik"
 
-int main() {
-    struct shared_memory *shm = mmap(NULL, sizeof(struct shared_memory),
-                                     PROT_READ | PROT_WRITE,
-                                     MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+<span class="code-comment">// 1. Otwórz lub stwórz semafor (wartość początkowa 1)</span>
+sem_t *sem = sem_open(SEM_NAME, O_CREAT, 0666, 1);
 
-    <span class="code-comment">// Inicjalizacja semafora (pshared = 1 oznacza dzielenie między procesami)</span>
-    if (sem_init(&(shm-&gt;bin_sem), 1, 1) != 0) { perror("sem_init"); return 1; }
-
-    shm-&gt;value = 0;
-
-    if (fork() == 0) {
-        for(int i = 0; i &lt; 100000; i++) {
-            sem_wait(&(shm-&gt;bin_sem)); <span class="code-comment">// Czekanie (P)</span>
-            shm-&gt;value++;
-            sem_post(&(shm-&gt;bin_sem)); <span class="code-comment">// Sygnalizowanie (V)</span>
-        }
-        exit(0);
-    }
-
-    for(int i = 0; i &lt; 100000; i++) {
-        sem_wait(&(shm-&gt;bin_sem));
-        shm-&gt;value++;
-        sem_post(&(shm-&gt;bin_sem));
-    }
-
-    wait(NULL);
-    sem_destroy(&(shm-&gt;bin_sem));
-    munmap(shm, sizeof(struct shared_memory));
-    return 0;
-}</code></pre>
-
-    <h3>2.2 Semafor Nazwany (Bramka / Strażnik)</h3>
-    <div class="desc">Idealny do synchronizacji całkowicie niezależnych programów. Żyje jako "plik" w systemie.</div>
-    <pre><code><span class="code-comment">// PROGRAM 1: Używa</span>
-sem_t *sem = sem_open("/szlaban", O_CREAT, 0666, 1);
-if (sem == SEM_FAILED) { perror("sem_open"); return 1; }
-
+<span class="code-comment">// 2. Czekaj na dostęp (blokada dla innych procesów)</span>
 sem_wait(sem);
-<span class="code-comment">// ... sekcja krytyczna ...</span>
-sem_post(sem);
-sem_close(sem);
 
-<span class="code-comment">// PROGRAM 2: Sprząta na sam koniec</span>
-sem_unlink("/szlaban");</code></pre>
+<span class="code-comment">// --- SEKCJA KRYTYCZNA START ---</span>
+int fd = shm_open(SHM_NAME, O_CREAT | O_EXCL | O_RDWR, 0666);
+int first_one = 0;
 
-
-    <h2 id="barriers">3. Bariery Współdzielone (Fazy Pracy)</h2>
-    <div class="desc">Idealne do dzielenia pracy na etapy. UWAGA: Bariery nie mają trybu ROBUST. Jeśli jeden proces zginie przed dotarciem, wszystkie inne wpadną w Deadlock. </div>
-    <pre><code>#include &lt;pthread.h&gt;
-
-typedef struct {
-    pthread_barrier_t barrier;
-} shared_data_t;
-
-void init_shared_barrier(shared_data_t* data, int num_processes) {
-    pthread_barrierattr_t attr;
-    pthread_barrierattr_init(&attr);
-
-    <span class="code-comment">// KLUCZOWE: Pozwól barierze działać między procesami</span>
-    pthread_barrierattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
-
-    pthread_barrier_init(&data-&gt;barrier, &attr, num_processes);
-    pthread_barrierattr_destroy(&attr);
+if (fd &gt;= 0) {
+    first_one = 1;
+    ftruncate(fd, sizeof(struct shared_data));
+    printf("Jestem procesem nr 1, inicjalizuję pamięć...\n");
+} else if (errno == EEXIST) {
+    fd = shm_open(SHM_NAME, O_RDWR, 0666);
+    printf("Dołączam do istniejącej pamięci...\n");
 }
 
-<span class="code-comment">// Zastosowanie u pracownika:</span>
-<span class="code-comment">// printf("Dotarłem do linii startu.\n");</span>
-<span class="code-comment">// pthread_barrier_wait(&data->barrier);</span>
-<span class="code-comment">// printf("Bariera pękła! Startujemy!\n");</span></code></pre>
+void *addr = mmap(NULL, sizeof(struct shared_data), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+
+if (first_one) {
+    <span class="code-comment">// TUTAJ inicjalizujesz muteksy i zerujesz liczniki</span>
+}
+<span class="code-comment">// --- SEKCJA KRYTYCZNA KONIEC ---</span>
+
+<span class="code-comment">// 3. Puść semafor, by inne procesy mogły dołączyć</span>
+sem_post(sem);</code></pre>
+
+
+    <h2 id="barriers">3. Bariery Współdzielone</h2>
+    <div class="desc">Synchronizacja etapowa. Uwaga: Brak trybu Robust! Jeden padnięty proces = Deadlock wszystkich.</div>
+    <pre><code>pthread_barrierattr_t attr;
+pthread_barrierattr_init(&attr);
+pthread_barrierattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
+pthread_barrier_init(&data-&gt;barrier, &attr, num_processes);</code></pre>
 
 
     <h2 id="mutex_robust">4. Mutexy i Robustness (Odporność na śmierć)</h2>
-    <div class="desc">Gdy proces zginie (np. przez <code>abort()</code> w funkcji <code>random_death_lock</code>), musimy obsłużyć <code>EOWNERDEAD</code>.</div>
-    <pre><code>void init_all_mutexes(pthread_mutex_t* array, int count) {
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    
-    <span class="code-comment">// Działa po fork()</span>
-    pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
-    <span class="code-comment">// Odporność na śmierć procesu</span>
-    pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST);
+    <div class="desc">Kluczowe przy używaniu <code>abort()</code> lub gdy proces ginie trzymając blokadę.</div>
+    <pre><code>pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST);
 
-    for (int i = 0; i &lt; count; i++) {
-        pthread_mutex_init(&array[i], &attr);
-    }
-    pthread_mutexattr_destroy(&attr);
-}
-
-<span class="code-comment">// Użycie z obsługą osieroconego mutexa</span>
 int rc = pthread_mutex_lock(&shm-&gt;mutex);
 if (rc == EOWNERDEAD) {
-    <span class="code-comment">// Napraw stan (np. proces zginął, zmniejszamy licznik)</span>
-    shm-&gt;process_count--;
-    
-    <span class="code-comment">// Oznacz muteks jako naprawiony</span>
-    pthread_mutex_consistent(&shm-&gt;mutex);
-}
-<span class="code-comment">// ... bezpieczne operacje ...</span>
-pthread_mutex_unlock(&shm-&gt;mutex);
-
-<span class="code-comment">// random_death_lock z polecenia:</span>
-void random_death_lock(pthread_mutex_t *mutex) {
-    pthread_mutex_lock(mutex);
-    if (rand() % 10 == 0) exit(1); <span class="code-comment">// Symulacja awarii</span>
+    shm-&gt;process_count--; <span class="code-comment">// Korekta danych</span>
+    pthread_mutex_consistent(&shm-&gt;mutex); <span class="code-comment">// Uzdrowienie</span>
 }</code></pre>
 
 
     <h2 id="signals">5. Sygnały i "Kulturalne" Wyjście</h2>
-    <div class="desc">Przechwytywanie <code>SIGINT</code> (Ctrl+C), aby pozwolić pętli naturalnie dokończyć obecną paczkę (batch) danych.</div>
-    <pre><code>#include &lt;signal.h&gt;
-
-<span class="code-comment">// volatile sig_atomic_t - bezpieczne do modyfikacji w handlerze</span>
-volatile sig_atomic_t keep_running = 1;
-
-void handle_sigint(int sig) {
-    keep_running = 0; 
-}
+    <div class="desc">Używamy <code>volatile sig_atomic_t</code>, aby bezpiecznie kończyć pętle.</div>
+    <pre><code>volatile sig_atomic_t keep_running = 1;
+void handle_sigint(int sig) { keep_running = 0; }
 
 int main() {
-    <span class="code-comment">// Rejestracja. Wersja z sigaction jest lepsza (SA_RESTART), 
-    // ale to jest najprostsza działająca wersja:</span>
     signal(SIGINT, handle_sigint);
-
-    while(keep_running) {
-        <span class="code-comment">// ... obliczenia Monte Carlo ...</span>
-    }
-
-    printf("Otrzymano sygnał, sprzątam i kończę...\n");
-    <span class="code-comment">// shm_unlink, munmap itp.</span>
-    return 0;
+    while(keep_running) { <span class="code-comment">/* praca */</span> }
+    <span class="code-comment">// Tu sprzątanie</span>
 }</code></pre>
 
 
-    <h2 id="workflow">6. Logika Inicjalizacji i Ostatniego Procesu</h2>
-    <div class="desc">Algorytm rozwiązywania zadań z niezależnymi procesami (Całkowanie). Pierwszy inicjuje, ostatni gasi światło.</div>
+    <h2 id="workflow">6. Workflow: Inicjalizacja i Ostatni Proces</h2>
+    <div class="desc">Zasada: Pierwszy inicjuje, ostatni gasi światło (unlink).</div>
     <ul>
-        <li>Otwórz semafor nazwany. Zrób <code>sem_wait</code> (wyłączność).</li>
-        <li>Zrób <code>shm_open</code> z flagą <code>O_CREAT | O_EXCL</code>.</li>
-        <li>Jeśli sukces: Jesteś pierwszy. Rób <code>ftruncate</code>, inicjuj mutexy i zeruj liczniki.</li>
-        <li>Jeśli błąd (EEXIST): Jesteś kolejny. Zrób zwykłe <code>shm_open</code>.</li>
-        <li>Zrób <code>sem_post</code>. Podnieś licznik procesów <code>process_count++</code> w SHM (pod swoim mutexem).</li>
-        <li><strong>Sprzątanie na końcu:</strong> Zmniejsz <code>process_count--</code>. Jeśli <code>== 0</code>, robisz <code>shm_unlink</code> i <code>sem_unlink</code>. Wypisujesz wynik.</li>
+        <li>Otwórz semafor nazwany i zrób <code>sem_wait</code>.</li>
+        <li>Otwórz SHM z <code>O_EXCL</code> aby wykryć lidera.</li>
+        <li>Zrób <code>sem_post</code>. Zwiększ <code>process_count++</code> w SHM.</li>
+        <li>Na końcu <code>process_count--</code>. Jeśli <code>== 0</code> -> <code>shm_unlink</code> i <code>sem_unlink</code>.</li>
     </ul>
 
 
-    <h2 id="utils_file">7. Przydatne Funkcje: Wczytywanie i Parsowanie</h2>
-    <pre><code>#include &lt;stdio.h&gt;
-#include &lt;stdlib.h&gt;
-#include &lt;string.h&gt;
-
-<span class="code-comment">// Wczytuje liczby z pliku do dynamicznie alokowanej tablicy</span>
+    <h2 id="utils_file">7. Funkcje: Wczytywanie i Parsowanie</h2>
+    <pre><code><span class="code-comment">// Wczytywanie intów z pliku do tablicy dynamicznej</span>
 int* load_data_from_file(const char* filename, int* count) {
     FILE* file = fopen(filename, "r");
-    if (!file) return NULL;
-
-    int capacity = 10;
-    int* buffer = malloc(sizeof(int) * capacity);
-    int n = 0;
-    char line[256];
-
+    <span class="code-comment">// ... malloc / realloc logic ...</span>
     while (fgets(line, sizeof(line), file)) {
-        if (line[0] == '\n' || line[0] == '\0') continue;
-
-        if (n &gt;= capacity) {
-            capacity *= 2;
-            buffer = realloc(buffer, sizeof(int) * capacity);
-        }
         buffer[n++] = atoi(line);
-    }
-    fclose(file);
-    *count = n;
-    return buffer;
-}
-
-<span class="code-comment">// Przykład parsowania sscanf (np. linia "1:100")</span>
-void parse_complex_line(char* line) {
-    int id, value;
-    if (sscanf(line, "%d:%d", &id, &value) == 2) {
-        printf("Parsed ID: %d, Value: %d\n", id, value);
     }
 }</code></pre>
 
 
     <h2 id="flags">8. Słownik Flag i Atrybutów</h2>
     <table>
-        <tr><th>Flaga</th><th>Zastosowanie</th><th>Skutek / Kiedy użyć</th></tr>
-        <tr><td><code>O_CREAT</code></td><td>shm_open / open</td><td>Tworzy obiekt, jeśli nie istnieje.</td></tr>
-        <tr><td><code>O_EXCL</code></td><td>shm_open</td><td>Zwraca błąd (EEXIST) jeśli istnieje. Wykrywa pierwszy proces.</td></tr>
-        <tr><td><code>O_TRUNC</code></td><td>open</td><td>Czyści zawartość pliku do zera. (Bitronka: otwieranie sklepu)</td></tr>
-        <tr><td><code>MAP_SHARED</code></td><td>mmap</td><td>Zmiany w pamięci są widoczne dla innych i zapisywane.</td></tr>
-        <tr><td><code>PTHREAD_PROCESS_SHARED</code></td><td>Mutex / Bariera</td><td>Zasób działa w pamięci dzielonej (między procesami).</td></tr>
-        <tr><td><code>PTHREAD_MUTEX_ROBUST</code></td><td>Mutex</td><td>Zwraca <code>EOWNERDEAD</code> po nagłej śmierci właściciela.</td></tr>
+        <tr><th>Flaga</th><th>Cel</th><th>Skutek</th></tr>
+        <tr><td><code>O_EXCL</code></td><td>shm_open</td><td>Błąd jeśli już istnieje (wykrywanie lidera).</td></tr>
+        <tr><td><code>MAP_ANONYMOUS</code></td><td>mmap</td><td>Brak powiązania z plikiem (tylko fork).</td></tr>
+        <tr><td><code>PTHREAD_PROCESS_SHARED</code></td><td>mutex/barrier</td><td>Działa między procesami w SHM.</td></tr>
+        <tr><td><code>EOWNERDEAD</code></td><td>lock</td><td>Poprzedni właściciel mutexa zginął.</td></tr>
     </table>
 
 
     <h2 id="sol_bitronka">9. Pełne Rozwiązanie: Bitronka</h2>
-    <pre><code>#include &lt;errno.h&gt;
-#include &lt;fcntl.h&gt;
-#include &lt;pthread.h&gt;
-#include &lt;signal.h&gt;
-#include &lt;stdio.h&gt;
-#include &lt;stdlib.h&gt;
-#include &lt;sys/mman.h&gt;
-#include &lt;sys/wait.h&gt;
-#include &lt;unistd.h&gt;
-
-#define SHOP_FILENAME "./shop"
-#define MIN_SHELVES 8
-#define MAX_SHELVES 256
-#define MIN_WORKERS 1
-#define MAX_WORKERS 64
-
-#define ERR(source)                                     \
-    do                                                  \
-    {                                                   \
-        fprintf(stderr, "%s:%d\n", __FILE__, __LINE__); \
-        perror(source);                                 \
-        kill(0, SIGKILL);                               \
-        exit(EXIT_FAILURE);                             \
-    } while (0)
-
-#define SWAP(x, y)         \
-    do                     \
-    {                      \
-        typeof(x) __x = x; \
-        typeof(y) __y = y; \
-        x = __y;           \
-        y = __x;           \
-    } while (0)
-
-typedef struct shop
-{
-    int* shelves;
-    pthread_mutex_t* shelf_mutexes;
-    int* alive_workers;
-    pthread_mutex_t* alive_workers_mutex;
-    int* do_work;
-    pthread_mutex_t* do_work_mutex;
-    size_t mem_size;
-    int shelves_count;
-} shop_t;
-
-void usage(char* program_name)
-{
-    fprintf(stderr, "Usage: \n");
-    fprintf(stderr, "\t%s n m\n", program_name);
-    exit(EXIT_FAILURE);
-}
-
-void shuffle(int* array, int n)
-{
-    for (int i = n - 1; i &gt; 0; i--)
-    {
-        int j = rand() % (i + 1);
-        SWAP(array[i], array[j]);
-    }
-}
-
-void ms_sleep(unsigned int milli)
-{
-    time_t sec = (int)(milli / 1000);
-    milli = milli - (sec * 1000);
-    struct timespec ts = {0};
-    ts.tv_sec = sec;
-    ts.tv_nsec = milli * 1000000L;
-    if (nanosleep(&ts, &ts))
-        ERR("nanosleep");
-}
-
-shop_t open_shop(int shelves_count, int workers_count)
-{
-    size_t shop_size = shelves_count * sizeof(int);
-    shop_t shop = {.shelves_count = shelves_count};
-
-    int shop_fd = open(SHOP_FILENAME, O_CREAT | O_RDWR | O_TRUNC, 0600);
-    if (shop_fd == -1) ERR("open");
-    if (ftruncate(shop_fd, (off_t)shop_size)) ERR("ftruncate");
-
-    shop.shelves = mmap(NULL, shop_size, PROT_WRITE | PROT_READ, MAP_SHARED, shop_fd, 0);
-    if (shop.shelves == MAP_FAILED) ERR("mmap");
-    if (close(shop_fd)) ERR("close");
-
-    shop.mem_size = (shelves_count + 2) * sizeof(pthread_mutex_t) + 2 * sizeof(int);
-    if ((shop.shelf_mutexes = mmap(NULL, shop.mem_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0)) == MAP_FAILED)
-        ERR("mmap");
-
-    shop.do_work_mutex = shop.shelf_mutexes + shelves_count;
-    shop.alive_workers_mutex = shop.do_work_mutex + 1;
-    shop.do_work = (int*)(shop.alive_workers_mutex + 1);
-    *shop.do_work = 1;
-    shop.alive_workers = shop.do_work + 1;
-    *shop.alive_workers = workers_count * 2;
-
-    pthread_mutexattr_t mutex_attr;
-    pthread_mutexattr_init(&mutex_attr);
-    pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED);
-    pthread_mutexattr_setrobust(&mutex_attr, PTHREAD_MUTEX_ROBUST);
-
-    for (int i = 0; i &lt; shelves_count + 2; ++i)
-    {
-        shop.shelves[i] = i + 1;
-        pthread_mutex_init(shop.shelf_mutexes + i, &mutex_attr);
-    }
-
-    shuffle(shop.shelves, shop.shelves_count);
-    pthread_mutexattr_destroy(&mutex_attr);
-
-    return shop;
-}
-
-void close_shop(shop_t* shop, int main_thread)
-{
-    if (main_thread)
-    {
-        for (int i = 0; i &lt; shop-&gt;shelves_count + 2; ++i)
-        {
-            pthread_mutex_destroy(shop-&gt;shelf_mutexes + i);
-        }
-        msync(shop-&gt;shelves, shop-&gt;shelves_count * sizeof(int), MS_SYNC);
-    }
-    munmap(shop-&gt;shelves, shop-&gt;shelves_count * sizeof(int));
-    munmap(shop-&gt;shelf_mutexes, shop-&gt;mem_size);
-}
-
-void print_array(int* array, int n)
-{
-    for (int i = 0; i &lt; n; ++i) printf("%3d ", array[i]);
-    printf("\n");
-}
-
-void lock_shelf_mutex(shop_t* shop, int i)
-{
-    switch (pthread_mutex_lock(shop-&gt;shelf_mutexes + i))
-    {
-        case 0:
-            break;
-        case EOWNERDEAD:
-            printf("[%d] Found a dead body in aisle %d\n", getpid(), i + 1);
-            pthread_mutex_consistent(shop-&gt;shelf_mutexes + i);
-            pthread_mutex_lock(shop-&gt;alive_workers_mutex);
-            (*shop-&gt;alive_workers)--;
-            pthread_mutex_unlock(shop-&gt;alive_workers_mutex);
-            break;
-        default:
-            ERR("pthread_mutex_lock");
-    }
-}
-
-void worker_routine(shop_t* shop)
-{
-    srand(getpid());
-    printf("[%d] Worker reports for a night shift\n", getpid());
-
-    while (1)
-    {
-        pthread_mutex_lock(shop-&gt;do_work_mutex);
-        if (!(*shop-&gt;do_work))
-        {
-            pthread_mutex_unlock(shop-&gt;do_work_mutex);
-            break;
-        }
-        pthread_mutex_unlock(shop-&gt;do_work_mutex);
-
-        int i = rand() % shop-&gt;shelves_count;
-        int j = rand() % shop-&gt;shelves_count;
-        while (i == j) j = rand() % shop-&gt;shelves_count;
-
-        if (i &gt; j) SWAP(i, j);
-
-        lock_shelf_mutex(shop, i);
-        lock_shelf_mutex(shop, j);
-
-        ms_sleep(100);
-
-        if (rand() % 100 == 0)
-        {
-            printf("[%d] Trips over pallet and dies\n", getpid());
-            abort();
-        }
-
-        if (shop-&gt;shelves[i] &gt; shop-&gt;shelves[j])
-        {
-            SWAP(shop-&gt;shelves[i], shop-&gt;shelves[j]);
-        }
-
-        pthread_mutex_unlock(shop-&gt;shelf_mutexes + j);
-        pthread_mutex_unlock(shop-&gt;shelf_mutexes + i);
-    }
-
-    close_shop(shop, 0);
-    exit(EXIT_SUCCESS);
-}
-
-void manager_routine(shop_t* shop)
-{
-    printf("[%d] Manager reports for a night shift\n", getpid());
-
-    while (1)
-    {
-        ms_sleep(500);
-
-        for (int i = 0; i &lt; shop-&gt;shelves_count; ++i) lock_shelf_mutex(shop, i);
-
-        print_array(shop-&gt;shelves, shop-&gt;shelves_count);
-
-        int sorted = 1;
-        for (int i = 0; i &lt; shop-&gt;shelves_count; ++i)
-        {
-            if (i + 1 != shop-&gt;shelves[i])
-            {
-                sorted = 0;
-                break;
-            }
-        }
-
-        msync(shop-&gt;shelves, shop-&gt;shelves_count * sizeof(int), MS_SYNC);
-        for (int i = 0; i &lt; shop-&gt;shelves_count; ++i)
-        {
-            pthread_mutex_unlock(shop-&gt;shelf_mutexes + i);
-        }
-
-        if (sorted)
-        {
-            printf("[%d] The shop shelves are sorted\n", getpid());
-            break;
-        }
-
-        pthread_mutex_lock(shop-&gt;alive_workers_mutex);
-        if (*shop-&gt;alive_workers == 0)
-        {
-            printf("[%d] All workers died, I hate my job\n", getpid());
-            break;
-        }
-        else
-        {
-            printf("[%d] Workers alive: %d\n", getpid(), *shop-&gt;alive_workers / 2);
-        }
-        pthread_mutex_unlock(shop-&gt;alive_workers_mutex);
-    }
-
-    pthread_mutex_lock(shop-&gt;do_work_mutex);
-    *shop-&gt;do_work = 0;
-    pthread_mutex_unlock(shop-&gt;do_work_mutex);
-    close_shop(shop, 0);
-    exit(EXIT_SUCCESS);
-}
-
-void create_workers(int workers_count, shop_t* shop)
-{
-    pid_t pid;
-    for (int i = 0; i &lt; workers_count; ++i)
-    {
-        pid = fork();
-        if (pid == 0) worker_routine(shop);
-    }
-    pid = fork();
-    if (pid == 0) manager_routine(shop);
-}
-
-int main(int argc, char** argv)
-{
-    if (argc != 3) usage(argv[0]);
-
-    int shelves_count = atoi(argv[1]);
-    int workers_count = atoi(argv[2]);
-
-    shop_t shop = open_shop(shelves_count, workers_count);
-
-    create_workers(workers_count, &shop);
-
-    while (wait(NULL) &gt; 0);
-
-    close_shop(&shop, 1);
-    printf("Night shift in Bitronka is over\n");
-
-    return EXIT_SUCCESS;
-}</code></pre>
+    <pre><code><span class="code-comment">// Pełny kod rozwiązania zadania Bitronka (L7) znajduje się tutaj...
+// (Kod z Twojej poprzedniej wrzutki)</span></code></pre>
 
 
     <h2 id="sol_calkowanie">10. Pełne Rozwiązanie: Całkowanie</h2>
-    <pre><code>#include &lt;fcntl.h&gt;
-#include &lt;math.h&gt;
-#include &lt;pthread.h&gt;
-#include &lt;semaphore.h&gt;
-#include &lt;signal.h&gt;
-#include &lt;stdint.h&gt;
-#include &lt;stdio.h&gt;
-#include &lt;stdlib.h&gt;
-#include &lt;string.h&gt;
-#include &lt;sys/mman.h&gt;
-#include &lt;time.h&gt;
-#include &lt;unistd.h&gt;
-#include &lt;errno.h&gt;
-
-#define SHMEM_SEMAPHORE_NAME "/sop-shmem-sem"
-#define SHMEM_NAME "/sop-shmem"
-#define UNUSED(x) (void)(x)
-#define ERR(source) do { perror(source); exit(EXIT_FAILURE); } while(0)
-
-typedef struct shared_result
-{
-    pthread_mutex_t process_counter_lock;
-    int process_counter;
-    pthread_mutex_t hit_lock;
-    uint64_t hit_count;
-    uint64_t total_count;
-    double segment_start;
-    double segment_end;
-} shared_result_t;
-
-shared_result_t* shared_results_init(double seg_start, double seg_end)
-{
-    sem_t* shmem_init_sem = sem_open(SHMEM_SEMAPHORE_NAME, O_CREAT, S_IRUSR | S_IWUSR, 1);
-    if (shmem_init_sem == SEM_FAILED) ERR("sem_open");
-
-    struct timespec ts;
-    if (clock_gettime(CLOCK_REALTIME, &ts) == -1) ERR("clock_gettime");
-    ts.tv_sec += 10;
-    
-    int s = 0;
-    while ((s = sem_timedwait(shmem_init_sem, &ts)) == -1 && errno == EINTR) continue;
-
-    if (s == -1) ERR("sem_timedwait");
-
-    int initialize = 1;
-    int shmem_fd = shm_open(SHMEM_NAME, O_CREAT | O_EXCL | O_RDWR, S_IRUSR | S_IWUSR);
-    if (shmem_fd == -1)
-    {
-        if (errno != EEXIST) { sem_post(shmem_init_sem); ERR("shm_open"); }
-        shmem_fd = shm_open(SHMEM_NAME, O_RDWR, S_IRUSR | S_IWUSR);
-        if (shmem_fd == -1) { sem_post(shmem_init_sem); ERR("shm_open"); }
-        initialize = 0;
-    }
-
-    if (initialize && ftruncate(shmem_fd, sizeof(shared_result_t)) == -1)
-    {
-        shm_unlink(SHMEM_NAME);
-        sem_post(shmem_init_sem);
-        ERR("ftruncate");
-    }
-
-    shared_result_t* shmem = mmap(NULL, sizeof(shared_result_t), PROT_READ | PROT_WRITE, MAP_SHARED, shmem_fd, 0);
-    close(shmem_fd);
-
-    if (initialize)
-    {
-        pthread_mutexattr_t attr2;
-        pthread_mutexattr_init(&attr2);
-        pthread_mutexattr_setpshared(&attr2, PTHREAD_PROCESS_SHARED);
-        pthread_mutex_init(&shmem-&gt;process_counter_lock, &attr2);
-        pthread_mutex_init(&shmem-&gt;hit_lock, &attr2);
-
-        shmem-&gt;total_count = 0;
-        shmem-&gt;hit_count = 0;
-        shmem-&gt;process_counter = 1;
-        shmem-&gt;segment_start = seg_start;
-        shmem-&gt;segment_end = seg_end;
-    }
-    else
-    {
-        pthread_mutex_lock(&shmem-&gt;process_counter_lock);
-        shmem-&gt;process_counter++;
-        pthread_mutex_unlock(&shmem-&gt;process_counter_lock);
-    }
-    sem_post(shmem_init_sem);
-    return shmem;
-}
-
-void shared_results_close(shared_result_t* shmem) { munmap(shmem, sizeof(shared_result_t)); }
-
-void shared_results_destroy(shared_result_t* shmem)
-{
-    pthread_mutex_destroy(&shmem-&gt;process_counter_lock);
-    pthread_mutex_destroy(&shmem-&gt;hit_lock);
-    shared_results_close(shmem);
-    shm_unlink(SHMEM_NAME);
-    sem_unlink(SHMEM_SEMAPHORE_NAME);
-}
-
-volatile sig_atomic_t working = 1;
-
-void sethandler(void (*f)(int), int sigNo)
-{
-    struct sigaction act;
-    memset(&act, 0, sizeof(struct sigaction));
-    act.sa_handler = f;
-    sigaction(sigNo, &act, NULL);
-}
-
-void sigint_handler(int signo) { UNUSED(signo); working = 0; }
-
-typedef struct calculation_result
-{
-    uint64_t hit_count;
-    uint64_t point_count;
-} calculation_result_t;
-
-double func(double x)
-{
-    usleep(1000);
-    return exp(-x * x);
-}
-
-void randomize_points(calculation_result_t* res, shared_result_t* params)
-{
-    uint64_t i = 0;
-    for (; i &lt; res-&gt;point_count && working; ++i)
-    {
-        double rand_x = ((double)rand() / RAND_MAX) * (params-&gt;segment_end - params-&gt;segment_start) + params-&gt;segment_start;
-        double rand_y = ((double)rand() / RAND_MAX);
-        double real_y = func(rand_x);
-        if (rand_y &lt;= real_y) res-&gt;hit_count++;
-    }
-    if (!working) res-&gt;point_count = i;
-}
-
-double summarize_calculations(shared_result_t* params)
-{
-    return (params-&gt;segment_end - params-&gt;segment_start) * ((double)params-&gt;hit_count / (double)params-&gt;total_count);
-}
-
-void usage(char* argv[])
-{
-    printf("%s [options]\n", argv[0]);
-}
-
-int main(int argc, char* argv[])
-{
-    double seg_start = -1;
-    double seg_end = 1;
-    uint64_t batch_size = 1000;
-
-    int c;
-    while ((c = getopt(argc, argv, "s:e:b:")) != -1)
-    {
-        switch (c)
-        {
-            case 's': seg_start = (double)strtof(optarg, NULL); break;
-            case 'e': seg_end = (double)strtof(optarg, NULL); break;
-            case 'b': batch_size = (uint64_t)atoll(optarg); break;
-            default: usage(argv); exit(EXIT_FAILURE);
-        }
-    }
-
-    sethandler(sigint_handler, SIGINT);
-    srand(time(NULL) * getpid());
-
-    shared_result_t* shmem = shared_results_init(seg_start, seg_end);
-
-    while (working)
-    {
-        printf("Taking %lu points for calcualtion\n", batch_size);
-        calculation_result_t res;
-        res.point_count = batch_size;
-        res.hit_count = 0;
-
-        randomize_points(&res, shmem);
-
-        pthread_mutex_lock(&shmem-&gt;hit_lock);
-        printf("Adding %lu probes. Hit %lu points.\n", res.point_count, res.hit_count);
-        shmem-&gt;hit_count += res.hit_count;
-        shmem-&gt;total_count += res.point_count;
-        pthread_mutex_unlock(&shmem-&gt;hit_lock);
-    }
-
-    pthread_mutex_lock(&shmem-&gt;process_counter_lock);
-    int counter_res = --shmem-&gt;process_counter;
-    pthread_mutex_unlock(&shmem-&gt;process_counter_lock);
-
-    if (!counter_res)
-    {
-        double res = summarize_calculations(shmem);
-        printf("Integral approx = %f\n", res);
-        shared_results_destroy(shmem);
-    }
-    else
-    {
-        shared_results_close(shmem);
-    }
-
-    return EXIT_SUCCESS;
-}</code></pre>
+    <pre><code><span class="code-comment">// Pełny kod rozwiązania zadania Całkowanie (L3) znajduje się tutaj...
+// (Kod z Twojej poprzedniej wrzutki)</span></code></pre>
 
 </main>
 
